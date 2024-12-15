@@ -1,0 +1,580 @@
+---
+title: "Data Project"
+author: "Mingi Kang"
+date: "2024-05-14"
+output: pdf_document
+---
+
+
+# Provisional Deaths in California Counties by Demographic and Year 
+### Years: 2019 - 2022
+
+## Introduction 
+
+My interest in this data project comes from my home city of Los Angeles. Los Angeles is the largest city in California by population and the second largest city in the United States. As of 2023, the population of California is approximately 39.1 million people. With this many people in mind, there are different cases for deaths in the state. Each county has a different demographic and being in one demographic county can have more significance to death by a certain reason.Among the residents of California, this data project aims to find the fraction of deaths that come from a particular type of cause based on the different demographic factors. 
+
+
+## Data Collection | Data Cleaning 
+
+** The demographic data is from 2023, and the total number of deaths by different causes of deaths in the counties are from 2021, we could not find the number of deaths in 2023, but since the demographic data is accurate up to 5 years, the results should not be significantly different if we were to use 2023 total number of deaths by different causes of deaths data. 
+
+
+
+
+Before the analysis of the data, there had to be a couple of changes to the data file for final deaths by month by occurrence by county. Since there are 12 months and 3 years in this data set, I believe that it would have been better if all of the months combined into one year. Each county have 10s of deaths and by combining them, we can analyze the final deaths by year by occurrence by county instead of by month. 
+
+# ```{r setup, include=FALSE}
+# knitr::opts_chunk$set(warning = FALSE, message = FALSE, results='hide', echo = FALSE)
+# ```
+
+### Useful function for later 
+```{R}
+# Varius function for analysis 
+
+# function to calculate log likelihood for a linear model 
+calc.llk.lm <- function(lm.in){
+  eps <- lm.in$residuals
+  N <- length(eps) 
+  var <- 1/(N) *sum(eps^2, na.rm=TRUE)
+  llk <- sum(dnorm(eps, 0, sqrt(var), log=TRUE), na.rm=TRUE)
+  return (llk) 
+}
+
+# Function to calculate the AIC
+calc.aic <- function(model){
+  # Getting number of parameters 
+  K <-length(coef(model)) + 1 
+  
+  
+  # Getting the log likelihood
+  llk <- calc.llk.lm(model)
+  
+  aic <- 2 * K - 2 * llk 
+  return (aic)
+}
+
+## Optional : Function to calculate the number of parameters in a linear model 
+calc.num.parameters <- function(lm.in){
+  K <-length(coef(lm.in)) + 1 
+  return (K)
+}
+
+
+# Function to generate all possible subsets of a vector
+getSubsets <- function(vec) {
+  n <- length(vec)
+  subsets <- list()
+  for (i in 0:n) {
+    subsets <- c(subsets, combn(vec, i, simplify = FALSE))
+  }
+  return(subsets)
+}
+
+# Function to generate all possible linear models
+generateModels <- function(response, predictors, data) {
+  # Get all subsets of predictors
+  attach(data)
+  predictorSubsets <- getSubsets(predictors)
+  
+  # Initialize a list to store the models
+  models <- list()
+  
+  # For each subset of predictors...
+  for (i in 1:length(predictorSubsets)) {
+    # Skip if the subset is empty
+    if (length(predictorSubsets[[i]]) == 0) next
+    
+    # Generate the formula for the linear model
+    formula <- as.formula(paste(response, "~", paste(predictorSubsets[[i]], collapse = "+")))
+    
+    # Fit the linear model and store it in the list
+    model <- try(lm(formula, data=data), silent=TRUE)
+    if (!inherits(model, "try-error")) {
+      models[[length(models) + 1]] <- model
+    }
+  }
+  
+  return(models)
+}
+
+```
+
+
+### Loading up the data and attaching variables 
+```{R}
+# Load the data for demographic and death data 
+data.set <- read.csv("Data/Final Data/demographic_death.csv")
+
+# attaching variable names to columns
+column.names <- c("County", "Population", 
+                    "American-Indian", "Asian", "Black", "Hispanic", "Multi-Racial", "Pacific-Islander", "White", 
+                    "0-5", "6-17", "18-64", "65+", 
+                    "All-Causes", "Alzheimer-Disease", "Malignant-Neoplasms", 
+                    "Chronic-Lower-Respiratory-Disease", "Diabetes-Mellitus", "Assult-Homocide",
+                    "Disease-of-Heart", 
+                    "Essential-Hypertension-Hypertensive-Renal-Disease", "Accident-Unintentional", 
+                    "Chronic-Liver-Disease-Cirrhosis", "Nephritis-Nephrotic-Syndrome-Nephrosis",
+                    "Parkinsons-Disease", "Influenza-Pneumonia", 
+                    "Cerebrovascular-Disease", "Intentional-Self-Harm-Suicide")
+
+# Attaching variable names to columns
+names(data.set) <- c("C", "P", "AI", "A", "B", "H", "MR", "HPI", "W", 
+                     "X0_5", "X6_17", "X18_64", "X65_plus", 
+                     "AC", "AD", "MN", "CLRD", "DM", "AH", "DOH", "EHHRD", "AU", "CLDC", 
+                     "NNSN", "PD", "IP", "CD", "ISHS")
+
+# Demographic variables
+dem <- c("P", "AI", "A", "B", "H", "MR", "HPI", "W", 
+         "X0_5", "X6_17", "X18_64", "X65_plus")
+
+# Cause of death variables
+dea <- c("AC", "AD", "MN", "CLRD", "DM", "AH", "DOH", "EHHRD", "AU", "CLDC", 
+         "NNSN", "PD", "IP", "CD", "ISHS")
+
+
+# Standarizing the data 
+std.data.set <- data.set 
+for (i in 2:ncol(data.set)) {
+  std.data.set[, i] <- (data.set[, i] - mean(data.set[,i], na.rm=TRUE))
+  std.data.set[, i] <- std.data.set[,i]/sd(data.set[,i], na.rm=TRUE)
+}
+attach(std.data.set)
+
+#### data.set -> original data
+#### std.data.set -> standardized data 
+```
+
+## Calculating LLK and AIC for linear models 
+
+
+```{R}
+# All Causes
+library(ggplot2)
+all.causes <- dea[1]
+regressors <- dem 
+models <- generateModels(all.causes, regressors, data.set)
+
+llk <- sapply(models, calc.llk.lm)
+aic <- sapply(models, calc.aic)
+
+# Create a data frame
+df <- data.frame(
+  Regressor = seq_along(aic),    # Create an index for the x-axis
+  LLK = llk,                         # The LLK values for the y-axis 
+  AIC = aic                         # The AIC values for the y-axis
+)
+
+
+
+# Plot the line graph for LLK 
+ggplot(df, aes(x = Regressor, y = LLK)) +
+  geom_point(color = "red") +  # Adding points to the line for better visibility
+  labs(title = "Line Graph of LLK with Regressors",
+       x = "Regressor Index",
+       y = "LLK Value") +
+  theme_minimal()
+
+# Plot the line graph for AIC 
+ggplot(df, aes(x = Regressor, y = AIC)) +
+  geom_point(color = "red") +  # Adding points to the line for better visibility
+  labs(title = "Line Graph of AIC with Regressors",
+       x = "Regressor Index",
+       y = "AIC Value") +
+  theme_minimal()
+
+```
+
+
+
+
+
+```{R}
+# Get LLK and AIC for linear models 
+lm.matrix <- matrix(nrow = length(dea), ncol = 5)
+std.matrix <- matrix(nrow = length(dea), ncol = 5)
+
+all.lm <- list()
+```
+
+```{R}
+for (i in 1:length(dea)) {
+  dep.var <- dea[i]
+  regressors <- dem 
+
+  # Generate all possible models for data + standardized data
+  models <- generateModels(dep.var, regressors, data.set)
+  std.models <- generateModels(dep.var, regressors, std.data.set)
+
+  # save models for later use 
+  all.lm[[i]] <- models
+
+  # Calculate LLK for each model 
+  llk <- sapply(models, calc.llk.lm)
+  std.llk <- sapply(std.models, calc.llk.lm)
+
+  # Calculate AIC for each model
+  aic <- sapply(models, calc.aic)
+  std.aic <- sapply(std.models, calc.aic)
+
+  # Store the results in the matrix
+  maxLLKIndex <- which.max(llk)
+  minAICIndex <- which.min(aic)
+  std.maxLLKIndex <- which.max(std.llk)
+  std.minAICIndex <- which.min(std.aic)
+
+  # store them in model 
+  lm.matrix[i, 1] <- dep.var
+  lm.matrix[i, 2] <- maxLLKIndex
+  lm.matrix[i, 3] <- max(llk)
+  lm.matrix[i, 4] <- minAICIndex
+  lm.matrix[i, 5] <- min(aic)
+
+  std.matrix[i, 1] <- dep.var
+  std.matrix[i, 2] <- std.maxLLKIndex
+  std.matrix[i, 3] <- max(std.llk)
+  std.matrix[i, 4] <- std.minAICIndex
+  std.matrix[i, 5] <- min(std.aic)
+  print("-\n")
+}
+
+
+lm.df <- as.data.frame(lm.matrix)
+colnames(lm.df) <- c("Cause Death", "Max LLK Index", "Max LLK", "Min AIC Index", "Min AIC")
+
+std.lm.df <- as.data.frame(std.matrix)
+colnames(std.lm.df) <- c("Cause Death", "Max LLK Index", "Max LLK", "Min AIC Index", "Min AIC")
+
+print(lm.df)
+print(std.lm.df)
+
+```
+
+#### best models 
+```{R}
+
+```
+
+```{R}
+# 1. All Causes 
+min.aic.lm <- all.lm[[1]][[3523]]
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+```{R}
+# 2. "Alzheimer-Disease"
+min.aic.lm <- all.lm[[2]][[3799]]
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+```{R}
+# 3. Malignant Neoplasms
+min.aic.lm <- all.lm[[3]][[1807]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+```{R}
+# 4. Chronic lower respiratory disease  
+min.aic.lm <- all.lm[[4]][[3928]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+
+```{R}
+# 5. Diabetes Mellitus 
+min.aic.lm <- all.lm[[5]][[3864]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+
+```{R}
+# 6. Assult Homicide
+min.aic.lm <- all.lm[[6]][[3917]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+
+```{R}
+# 7. Disease of hear  
+min.aic.lm <- all.lm[[7]][[3921]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+
+```{R}
+# 8. Essential Hypertension 
+min.aic.lm <- all.lm[[8]][[4063]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+
+```{R}
+# 9. Accident Unintentional 
+min.aic.lm <- all.lm[[9]][[1404]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+```{R}
+# 10. Chronic Liver 
+min.aic.lm <- all.lm[[10]][[3800]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+```{R}
+# 11. Nephritis
+min.aic.lm <- all.lm[[11]][[1021]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+```{R}
+# 12. Parkinsons
+min.aic.lm <- all.lm[[12]][[1461]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+```{R}
+# 13. Influenza
+min.aic.lm <- all.lm[[13]][[1535]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+```{R}
+# 14. Cerebrovascular
+min.aic.lm <- all.lm[[14]][[706]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+```{R}
+# 15. Intentional 
+min.aic.lm <- all.lm[[15]][[791]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+```
+
+### Analysis and Bootstrap for Malignant Neoplasms
+```{R}
+# 3. Malignant Neoplasms
+min.aic.lm <- all.lm[[3]][[1807]]
+summary(min.aic.lm)
+print(min.aic.lm$coefficients)
+
+
+# 65 + model 
+# Assuming your data frame is named data.set and the variables are properly named
+lm.65.plus <- lm(data.set$MN ~ data.set$P + data.set$A + data.set$B + data.set$H + data.set$W + data.set$X65_plus)
+
+# Display the summary of the linear model
+summary(lm.65.plus)
+print(lm.65.plus$coefficients)
+
+# comparing aic
+min.aic.lm.aic <- calc.aic(min.aic.lm)
+lm.65.plus.aic <- calc.aic(lm.65.plus)
+cat("The AIC with X0_5: ", min.aic.lm.aic, "\n")
+cat("The AIC with X65_plus: ", lm.65.plus.aic, "\n")
+
+min.aic.lm.r.sq <- summary(min.aic.lm)$r.squared
+lm.65.plus.r.sq <- summary(lm.65.plus)$r.squared
+cat("R Squared \n") 
+cat("The R Squared with X0_5: ", min.aic.lm.r.sq, "\n")
+cat("The R Squared with X65_plus: ", lm.65.plus.r.sq, "\n")
+
+lm.65.plus$coefficients[7]
+min.aic.lm$coefficients[7]
+```
+
+
+```{R}
+# Bootstrapping 
+M <- 3000
+X.0.5.coef <- rep(NA, M)
+X.65.plus.coef <- rep(NA, M)
+
+for (j in 1:M){
+  
+  bs.pos <- sample(1:N, N, replace=TRUE)
+  df.bs <- data.set[bs.pos, ]
+  
+  ## Recalculate 
+  lm.0.5.temp <- lm(df.bs$MN ~ df.bs$P + df.bs$A + df.bs$B + df.bs$H + df.bs$W + df.bs$X0_5)
+  lm.65.plus.temp <- lm(df.bs$MN ~ df.bs$P + df.bs$A + df.bs$B + df.bs$H + df.bs$W + df.bs$X65_plus)
+
+  X.0.5.coef[j] <- lm.0.5.temp$coefficients[7]
+  X.65.plus.coef[j] <- lm.65.plus.temp$coefficients[7]
+  
+}
+
+c.i.99.0.5 <- quantile(X.0.5.coef, c(0.005, 0.995))
+
+c.i.99.65.plus <-quantile(X.65.plus.coef, c(0.005, 0.995))
+
+cat("The 99th confidence interval for coefficient for age 0-5 is: ", c.i.99.0.5, "\n")
+cat("The 99th confidence interval for coefficient for age 65+ is: ", c.i.99.65.plus, "\n")
+
+```
+
+### Analysis and Bootstrap for Intentional Suicide 
+
+```{R}
+# 15. Intentional 
+min.aic.lm <- all.lm[[15]][[791]]
+
+print(summary(min.aic.lm))
+print(names(min.aic.lm$coefficients))
+print(coef(min.aic.lm))
+print(min.aic.lm$coefficients[2])
+
+# Bootstrapping 
+M <- 3000
+W.coeff <- rep(NA, M)
+
+for (j in 1:M){
+  
+  bs.pos <- sample(1:N, N, replace=TRUE)
+  df.bs <- data.set[bs.pos, ]
+  
+  ## Recalculate 
+  lm.temp <- lm(df.bs$ISHS ~ df.bs$W + df.bs$X0_5 + df.bs$X18_64 + df.bs$X65_plus)
+
+  # Store coefficients
+  W.coeff[j] <- lm.temp$coefficients[2]
+}
+
+c.i.99.white <- quantile(W.coeff, c(0.005, 0.995))
+cat("The 99th confidence interval for coefficient for white is: ", 
+    c.i.99.white , "\n")
+
+
+```
+
+### Correlation Matrix 
+```{R}
+### Correlation matrix 
+library(corrplot)
+cor.mat <- cor(data.set[, -1])
+corrplot(cor.mat)
+```
+
+```{R}
+
+```
+
+
+## Plots for Heat Map of California 
+```{r}
+# total population based on the counties
+library(ggplot2)
+library(sf)
+library(tigris)
+library(dplyr)
+library(viridis)
+
+options(tigris_class = "sf")
+
+# Get ca counties information 
+ca_counties <- counties(state = "CA", cb = TRUE, class = "sf")
+
+# order the counties in alphabetical along 
+ca_counties <- arrange(ca_counties, NAME)
+
+# add population data to the ca_counties data frame
+ca_counties <- ca_counties %>%
+  mutate(population = data.set$P)
+
+# Create the heat map
+ggplot(data = ca_counties) +
+  geom_sf(aes(fill = population), color = "white", size = 0.1) +
+  scale_fill_viridis_c(option = "magma", name = "Population") +
+  labs(title = "Population Heat Map of California Counties") +
+  theme_minimal()
+
+
+```
+
+```{r}
+# total Death by Alzheimer Disease based on the counties
+library(ggplot2)
+library(sf)
+library(tigris)
+library(dplyr)
+library(viridis)
+
+options(tigris_class = "sf")
+
+# Get ca counties information 
+ca_counties <- counties(state = "CA", cb = TRUE, class = "sf")
+
+# order the counties in alphabetical along 
+ca_counties <- arrange(ca_counties, NAME)
+
+# add population data to the ca_counties data frame
+ca_counties <- ca_counties %>%
+  mutate(population = data.set$AD)
+
+# Create the heat map
+ggplot(data = ca_counties) +
+  geom_sf(aes(fill = population), color = "white", size = 0.1) +
+  scale_fill_viridis_c(option = "magma", name = "Population") +
+  labs(title = "Death by Alzheimer's Disease Heat Map of California Counties") +
+  theme_minimal()
+
+```
+
+```{r}
+# total population of White Californians based on the counties
+library(ggplot2)
+library(sf)
+library(tigris)
+library(dplyr)
+library(viridis)
+
+options(tigris_class = "sf")
+
+# Get ca counties information 
+ca_counties <- counties(state = "CA", cb = TRUE, class = "sf")
+
+# order the counties in alphabetical along 
+ca_counties <- arrange(ca_counties, NAME)
+
+# add population data to the ca_counties data frame
+ca_counties <- ca_counties %>%
+  mutate(population = data.set$W)
+
+# Create the heat map
+ggplot(data = ca_counties) +
+  geom_sf(aes(fill = population), color = "white", size = 0.1) +
+  scale_fill_viridis_c(option = "magma", name = "Population") +
+  labs(title = "White Population Heat Map of California Counties") +
+  theme_minimal()
+
+```
+
+
+## Plots for Linear model and Standarized Linear Model 
+
